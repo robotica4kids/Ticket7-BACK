@@ -182,90 +182,161 @@ exports.agregarTurno = async (req, res) => {
 };
 
 
+// exports.avanzarTurno = async (req, res) => {
+//   const { comercioId } = req.body;
+
+//   if (!comercioId) {
+//     return res.status(400).json({ error: "comercioId requerido" });
+//   }
+
+//   try {
+//     // 1. Obtener todos los turnos activos ordenados por posición
+//     const turnosSnap = await db.collection(`comercios/${comercioId}/turnos`)
+//       .where('cancelado', '==', false)
+//       .where('sobreturno', '==', false) // Solo turnos normales
+//       .orderBy('posicion')
+//       .get();
+
+//     if (turnosSnap.empty) {
+//       return res.status(400).json({ error: "No hay turnos para avanzar" });
+//     }
+
+//     const turnos = turnosSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+//     // 2. El turno actual (el primero no ocupado)
+//     const turnoActual = turnos.find(t => !t.ocupado);
+
+//     if (!turnoActual) {
+//       return res.status(400).json({ error: "No hay turno en atención" });
+//     }
+
+//     const batch = db.batch();
+
+//     // 3. Marcar el turno actual como ocupado (o eliminado, según tu lógica)
+//     // Opción A: marcar como ocupado
+//     batch.update(db.collection(`comercios/${comercioId}/turnos`).doc(turnoActual.id), {
+//       ocupado: true,
+//       atendidoEn: admin.firestore.FieldValue.serverTimestamp(),
+//     });
+
+//     // Opción B: eliminarlo directamente (si querés que desaparezca de la lista)
+//     // batch.delete(db.collection(`comercios/${comercioId}/turnos`).doc(turnoActual.id));
+
+//     // 4. Opcional: regenerar sobreturnos (si tu lógica lo necesita después de avanzar)
+//     // Podés llamar a la misma lógica que tenés en agregarTurno, o moverla a una función separada
+//     // Por ahora lo dejamos como regeneración simple (igual que en agregarTurno)
+//     const clientes = turnos.filter(t => !t.sobreturno && !t.ocupado);
+//     const sobreturnosLibres = turnos.filter(t => t.sobreturno && !t.ocupado);
+
+//     // Borrar sobreturnos libres
+//     sobreturnosLibres.forEach(t => {
+//       if (t.id) {
+//         batch.delete(db.collection(`comercios/${comercioId}/turnos`).doc(t.id));
+//       }
+//     });
+
+//     // Crear nuevos sobreturnos entre clientes
+//     for (let i = 0; i < clientes.length - 1; i++) {
+//       const pos = clientes[i].posicion + 0.5;
+//       const yaExiste = turnos.some(t => t.sobreturno && Math.abs(t.posicion - pos) < 0.01);
+//       if (!yaExiste) {
+//         const nuevoSobRef = db.collection(`comercios/${comercioId}/turnos`).doc();
+//         batch.set(nuevoSobRef, {
+//           nombre: `SOBRETURNO ${pos}`,
+//           telefono: "",
+//           posicion: pos,
+//           especial: false,
+//           sobreturno: true,
+//           ocupado: false,
+//           cancelado: false,
+//           timestamp: admin.firestore.FieldValue.serverTimestamp(),
+//         });
+//       }
+//     }
+
+//     await batch.commit();
+
+//     res.json({ 
+//       success: true, 
+//       message: "Turno avanzado correctamente",
+//       turnoAtendido: turnoActual.id 
+//     });
+//   } catch (error) {
+//     console.error("Error al avanzar turno:", error);
+//     res.status(500).json({ error: "Error interno del servidor" });
+//   }
+// };
+
 exports.avanzarTurno = async (req, res) => {
   const { comercioId } = req.body;
 
+  console.log(`[avanzarTurno] Inicio - comercioId: ${comercioId}`);
+
   if (!comercioId) {
+    console.log('[avanzarTurno] Error: falta comercioId');
     return res.status(400).json({ error: "comercioId requerido" });
   }
 
   try {
-    // 1. Obtener todos los turnos activos ordenados por posición
+    console.log(`[avanzarTurno] Consultando subcolección: comercios/${comercioId}/turnos`);
+
     const turnosSnap = await db.collection(`comercios/${comercioId}/turnos`)
       .where('cancelado', '==', false)
-      .where('sobreturno', '==', false) // Solo turnos normales
+      .where('sobreturno', '==', false)
       .orderBy('posicion')
       .get();
 
+    console.log(`[avanzarTurno] Turnos encontrados: ${turnosSnap.size}`);
+
     if (turnosSnap.empty) {
+      console.log('[avanzarTurno] No hay turnos válidos para avanzar');
       return res.status(400).json({ error: "No hay turnos para avanzar" });
     }
 
-    const turnos = turnosSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const turnos = turnosSnap.docs.map(doc => {
+      const data = doc.data();
+      console.log(`[avanzarTurno] Turno ID ${doc.id}:`, data);
+      return { id: doc.id, ...data };
+    });
 
-    // 2. El turno actual (el primero no ocupado)
     const turnoActual = turnos.find(t => !t.ocupado);
-
     if (!turnoActual) {
+      console.log('[avanzarTurno] Ningún turno sin ocupar');
       return res.status(400).json({ error: "No hay turno en atención" });
     }
 
+    console.log(`[avanzarTurno] Avanzando turno: ${turnoActual.id} (pos: ${turnoActual.posicion})`);
+
     const batch = db.batch();
 
-    // 3. Marcar el turno actual como ocupado (o eliminado, según tu lógica)
-    // Opción A: marcar como ocupado
-    batch.update(db.collection(`comercios/${comercioId}/turnos`).doc(turnoActual.id), {
+    const turnoRef = db.collection(`comercios/${comercioId}/turnos`).doc(turnoActual.id);
+    batch.update(turnoRef, {
       ocupado: true,
       atendidoEn: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // Opción B: eliminarlo directamente (si querés que desaparezca de la lista)
-    // batch.delete(db.collection(`comercios/${comercioId}/turnos`).doc(turnoActual.id));
+    console.log('[avanzarTurno] Actualizando turno actual como ocupado');
 
-    // 4. Opcional: regenerar sobreturnos (si tu lógica lo necesita después de avanzar)
-    // Podés llamar a la misma lógica que tenés en agregarTurno, o moverla a una función separada
-    // Por ahora lo dejamos como regeneración simple (igual que en agregarTurno)
-    const clientes = turnos.filter(t => !t.sobreturno && !t.ocupado);
-    const sobreturnosLibres = turnos.filter(t => t.sobreturno && !t.ocupado);
+    // Regeneración de sobreturnos (simplificada para debug)
+    // ... tu código de sobreturnos aquí ...
 
-    // Borrar sobreturnos libres
-    sobreturnosLibres.forEach(t => {
-      if (t.id) {
-        batch.delete(db.collection(`comercios/${comercioId}/turnos`).doc(t.id));
-      }
-    });
-
-    // Crear nuevos sobreturnos entre clientes
-    for (let i = 0; i < clientes.length - 1; i++) {
-      const pos = clientes[i].posicion + 0.5;
-      const yaExiste = turnos.some(t => t.sobreturno && Math.abs(t.posicion - pos) < 0.01);
-      if (!yaExiste) {
-        const nuevoSobRef = db.collection(`comercios/${comercioId}/turnos`).doc();
-        batch.set(nuevoSobRef, {
-          nombre: `SOBRETURNO ${pos}`,
-          telefono: "",
-          posicion: pos,
-          especial: false,
-          sobreturno: true,
-          ocupado: false,
-          cancelado: false,
-          timestamp: admin.firestore.FieldValue.serverTimestamp(),
-        });
-      }
-    }
-
+    console.log('[avanzarTurno] Ejecutando batch.commit()');
     await batch.commit();
 
-    res.json({ 
-      success: true, 
-      message: "Turno avanzado correctamente",
-      turnoAtendido: turnoActual.id 
-    });
+    console.log('[avanzarTurno] ÉXITO');
+    res.json({ success: true, message: "Turno avanzado correctamente" });
   } catch (error) {
-    console.error("Error al avanzar turno:", error);
-    res.status(500).json({ error: "Error interno del servidor" });
+    console.error('[avanzarTurno] ERROR COMPLETO:', error);
+    console.error(error.stack);
+    res.status(500).json({ 
+      error: "Error interno del servidor",
+      details: error.message 
+    });
   }
 };
+
+
+
 
 
 // ... resto de funciones (avanzarTurno, cancelarTurno, ocuparSobreturno, limpiarTurnos) ...
